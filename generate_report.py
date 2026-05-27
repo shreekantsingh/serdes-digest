@@ -213,10 +213,13 @@ def send_email(html_body: str, total: int) -> bool:
         print("[email] No DIGEST_EMAIL set — skipping email.")
         return False
 
+    # Support multiple comma-separated emails e.g. "a@x.com, b@y.com, c@z.com"
+    recipients = [e.strip() for e in DIGEST_EMAIL.split(",") if e.strip()]
+
     date_str = datetime.now().strftime("%d %b %Y")
     payload  = {
         "from":    FROM_EMAIL,
-        "to":      [DIGEST_EMAIL],
+        "to":      recipients,
         "subject": f"📡 SerDes Digest — {total} papers — {date_str}",
         "html":    html_body,
     }
@@ -232,7 +235,7 @@ def send_email(html_body: str, total: int) -> bool:
             timeout=30,
         )
         if r.status_code in (200, 201):
-            print(f"[email] ✓ Sent to {DIGEST_EMAIL}  (id: {r.json().get('id','')})")
+            print(f"[email] ✓ Sent to {len(recipients)} recipient(s): {', '.join(recipients)}  (id: {r.json().get('id','')})")
             return True
         else:
             print(f"[email] ✗ Failed — HTTP {r.status_code}: {r.text}")
