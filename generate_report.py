@@ -1,7 +1,7 @@
 """
 SerDes Daily Paper Digest
-Fetches from arXiv + IEEE Xplore, sends a rich HTML email via Resend.com.
-No SMTP. No passwords. Just one API key stored in GitHub Secrets.
+Fetches from arXiv + IEEE Xplore + Google Scholar, sends a rich HTML email via Resend.com.
+No SMTP. No passwords. Just API keys stored in GitHub Secrets.
 """
 
 import os
@@ -12,12 +12,14 @@ from datetime import datetime, timedelta
 
 # ─── CONFIG (set via GitHub Secrets / Variables) ───────────────────────────────
 QUERY        = os.getenv("SEARCH_QUERY", "SerDes high speed transceiver PAM4")
-DIGEST_EMAIL = os.getenv("DIGEST_EMAIL", "")        # your email address
-RESEND_KEY   = os.getenv("RESEND_API_KEY", "")      # from resend.com (free)
-IEEE_KEY     = os.getenv("IEEE_API_KEY", "")        # from developer.ieee.org (free, optional)
-FROM_EMAIL   = os.getenv("FROM_EMAIL", "digest@resend.dev")  # resend sandbox default
-MAX_RESULTS  = 12
-START_YEAR   = (datetime.now() - timedelta(days=180)).year
+DIGEST_EMAIL = os.getenv("DIGEST_EMAIL", "")          # your email address
+RESEND_KEY   = os.getenv("RESEND_API_KEY", "")        # from resend.com (free)
+IEEE_KEY     = os.getenv("IEEE_API_KEY", "")          # from developer.ieee.org (free, optional)
+SERPAPI_KEY  = os.getenv("SERPAPI_KEY", "")           # from serpapi.com (free tier, optional)
+FROM_EMAIL   = os.getenv("FROM_EMAIL", "digest@resend.dev")
+
+MAX_RESULTS = 12
+START_YEAR  = (datetime.now() - timedelta(days=180)).year
 # ───────────────────────────────────────────────────────────────────────────────
 
 
@@ -90,26 +92,100 @@ def fetch_ieee(query: str) -> list[dict]:
         return []
 
 
+def fetch_scholar(query: str) -> list[dict]:
+    """
+    Fetches Google Scholar results via SerpAPI.
+    Sign up free at https://serpapi.com — 100 searches/month on the free tier.
+    Add SERPAPI_KEY as a GitHub Secret to enable this source.
+    """
+    if not SERPAPI_KEY:
+        print("[Scholar] No SERPAPI_KEY — skipping.")
+        return []
+
+    url = "https://serpapi.com/search"
+    params = {
+        "engine":   "google_scholar",
+        "q":        query,
+        "num":      MAX_RESULTS,
+        "as_ylo":   START_YEAR,          # results from start year onwards
+        "sort":     "date",              # most recent first
+        "api_key":  SERPAPI_KEY,
+    }
+    try:
+        r = requests.get(url, params=params, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        out  = []
+        for item in data.get("organic_results", []):
+            # Publication info block
+            pub_info = item.get("publication_info", {})
+            authors_raw = pub_info.get("authors", [])
+            authors = ", ".join(a.get("name", "") for a in authors_raw[:3])
+            if not authors:
+                # fallback: parse from summary string e.g. "A Smith, B Jones - Nature, 2024"
+                summary = pub_info.get("summary", "")
+                authors = summary.split(" - ")[0].strip() if " - " in summary else ""
+
+            # Date: try to extract year from summary
+            summary  = pub_info.get("summary", "")
+            date_str = ""
+            for part in summary.split(","):
+                part = part.strip()
+                if part.isdigit() and len(part) == 4:
+                    date_str = part
+                    break
+
+            # Venue: everything after " - " in summary
+            venue = ""
+            if " - " in summary:
+                venue = summary.split(" - ", 1)[-1].strip()
+                venue = venue[:60] + "…" if len(venue) > 60 else venue
+
+            snippet  = (item.get("snippet") or "").strip()[:380]
+            link     = item.get("link", "")
+
+            out.append({
+                "source":   "Google Scholar",
+                "title":    item.get("title", "").strip(),
+                "link":     link,
+                "date":     date_str,
+                "authors":  authors,
+                "abstract": snippet,
+                "venue":    venue,
+            })
+        return out
+    except Exception as ex:
+        print(f"[Scholar] Error: {ex}")
+        return []
+
+
 # ─── HTML EMAIL TEMPLATE ───────────────────────────────────────────────────────
 
 def badge_html(source: str) -> str:
-    if source == "arXiv":
-        return '<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">arXiv</span>'
-    return '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">IEEE</span>'
+    styles = {
+        "arXiv":          ("background:#dbeafe;color:#1d4ed8;", "arXiv"),
+        "IEEE Xplore":    ("background:#dcfce7;color:#166534;", "IEEE"),
+        "Google Scholar": ("background:#fef9c3;color:#854d0e;", "Scholar"),
+    }
+    bg, label = styles.get(source, ("background:#f3f4f6;color:#374151;", source))
+    return (f'<span style="{bg}padding:2px 8px;border-radius:4px;'
+            f'font-size:11px;font-weight:600;">{label}</span>')
 
 
 def paper_row(p: dict) -> str:
     authors_str = p["authors"] + (" et al." if "," in p["authors"] else "")
-    title_html  = (f'<a href="{p["link"]}" style="color:#1d4ed8;text-decoration:none;'
-                   f'font-size:14px;font-weight:600;line-height:1.5;">{p["title"]}</a>'
-                   if p["link"] else
-                   f'<span style="font-size:14px;font-weight:600;line-height:1.5;">{p["title"]}</span>')
+    title_html  = (
+        f'<a href="{p["link"]}" style="color:#1d4ed8;text-decoration:none;'
+        f'font-size:14px;font-weight:600;line-height:1.5;">{p["title"]}</a>'
+        if p["link"] else
+        f'<span style="font-size:14px;font-weight:600;line-height:1.5;">{p["title"]}</span>'
+    )
     venue_short = p["venue"][:45] + "…" if len(p["venue"]) > 45 else p["venue"]
     return f"""
     <tr>
       <td style="padding:16px 20px;border-bottom:1px solid #f0f0f0;vertical-align:top;">
         <div style="margin-bottom:6px;">{title_html}</div>
-        <div style="font-size:12px;color:#6b7280;margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap;">
+        <div style="font-size:12px;color:#6b7280;margin-bottom:8px;flex-wrap:wrap;">
           <span>👤 {authors_str}</span>
           &nbsp;·&nbsp;
           <span>📅 {p["date"]}</span>
@@ -136,22 +212,36 @@ def section_header(title: str, count: int, color: str) -> str:
     </tr>"""
 
 
-def build_email_html(arxiv: list[dict], ieee: list[dict], query: str) -> str:
+def build_email_html(
+    arxiv: list[dict],
+    ieee: list[dict],
+    scholar: list[dict],
+    query: str,
+) -> str:
     date_str = datetime.now().strftime("%A, %d %B %Y")
-    total    = len(arxiv) + len(ieee)
+    total    = len(arxiv) + len(ieee) + len(scholar)
 
-    arxiv_rows = "".join(paper_row(p) for p in arxiv) if arxiv else \
+    arxiv_rows = (
+        "".join(paper_row(p) for p in arxiv)
+        if arxiv else
         '<tr><td style="padding:16px 20px;color:#9ca3af;font-size:13px;">No arXiv results found today.</td></tr>'
-
-    ieee_rows  = "".join(paper_row(p) for p in ieee) if ieee else \
+    )
+    ieee_rows = (
+        "".join(paper_row(p) for p in ieee)
+        if ieee else
         '<tr><td style="padding:16px 20px;color:#9ca3af;font-size:13px;">No IEEE results — add IEEE_API_KEY secret to enable.</td></tr>'
+    )
+    scholar_rows = (
+        "".join(paper_row(p) for p in scholar)
+        if scholar else
+        '<tr><td style="padding:16px 20px;color:#9ca3af;font-size:13px;">No Scholar results — add SERPAPI_KEY secret to enable.</td></tr>'
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>SerDes Digest — {date_str}</title></head>
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 0;">
 <tr><td align="center">
 <table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;">
@@ -163,7 +253,7 @@ def build_email_html(arxiv: list[dict], ieee: list[dict], query: str) -> str:
         📡 SerDes Daily Digest
       </div>
       <div style="font-size:13px;color:#93c5fd;">{date_str}</div>
-      <div style="margin-top:14px;display:inline-block;">
+      <div style="margin-top:14px;">
         <span style="background:#ffffff22;color:#e0f2fe;border-radius:20px;
                      padding:4px 14px;font-size:12px;">🔍 {query}</span>
         &nbsp;
@@ -177,10 +267,16 @@ def build_email_html(arxiv: list[dict], ieee: list[dict], query: str) -> str:
   <tr>
     <td style="background:#ffffff;">
       <table width="100%" cellpadding="0" cellspacing="0">
+
         {section_header("📚 arXiv Papers", len(arxiv), "#1d4ed8")}
         {arxiv_rows}
+
         {section_header("📡 IEEE Xplore Papers", len(ieee), "#166534")}
         {ieee_rows}
+
+        {section_header("🎓 Google Scholar Papers", len(scholar), "#854d0e")}
+        {scholar_rows}
+
       </table>
     </td>
   </tr>
@@ -191,7 +287,7 @@ def build_email_html(arxiv: list[dict], ieee: list[dict], query: str) -> str:
                padding:16px 20px;text-align:center;">
       <p style="font-size:11px;color:#9ca3af;margin:0;">
         Auto-generated by <strong>serdes-digest</strong> via GitHub Actions
-        &nbsp;·&nbsp; Sources: arXiv API, IEEE Xplore API
+        &nbsp;·&nbsp; Sources: arXiv API, IEEE Xplore API, Google Scholar (SerpAPI)
         &nbsp;·&nbsp; To unsubscribe, remove DIGEST_EMAIL from GitHub repo variables.
       </p>
     </td>
@@ -213,17 +309,14 @@ def send_email(html_body: str, total: int) -> bool:
         print("[email] No DIGEST_EMAIL set — skipping email.")
         return False
 
-    # Support multiple comma-separated emails e.g. "a@x.com, b@y.com, c@z.com"
     recipients = [e.strip() for e in DIGEST_EMAIL.split(",") if e.strip()]
-
-    date_str = datetime.now().strftime("%d %b %Y")
-    payload  = {
+    date_str   = datetime.now().strftime("%d %b %Y")
+    payload    = {
         "from":    FROM_EMAIL,
         "to":      recipients,
         "subject": f"📡 SerDes Digest — {total} papers — {date_str}",
         "html":    html_body,
     }
-
     try:
         r = requests.post(
             "https://api.resend.com/emails",
@@ -235,7 +328,8 @@ def send_email(html_body: str, total: int) -> bool:
             timeout=30,
         )
         if r.status_code in (200, 201):
-            print(f"[email] ✓ Sent to {len(recipients)} recipient(s): {', '.join(recipients)}  (id: {r.json().get('id','')})")
+            print(f"[email] ✓ Sent to {len(recipients)} recipient(s): {', '.join(recipients)} "
+                  f"(id: {r.json().get('id', '')})")
             return True
         else:
             print(f"[email] ✗ Failed — HTTP {r.status_code}: {r.text}")
@@ -248,21 +342,25 @@ def send_email(html_body: str, total: int) -> bool:
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"[run] Query      : {QUERY}")
-    print(f"[run] To email   : {DIGEST_EMAIL or 'NOT SET'}")
-    print(f"[run] Resend key : {'set ✓' if RESEND_KEY else 'NOT SET'}")
-    print(f"[run] IEEE key   : {'set ✓' if IEEE_KEY   else 'not set (optional)'}")
+    print(f"[run] Query        : {QUERY}")
+    print(f"[run] To email     : {DIGEST_EMAIL or 'NOT SET'}")
+    print(f"[run] Resend key   : {'set ✓' if RESEND_KEY else 'NOT SET'}")
+    print(f"[run] IEEE key     : {'set ✓' if IEEE_KEY else 'not set (optional)'}")
+    print(f"[run] SerpAPI key  : {'set ✓' if SERPAPI_KEY else 'not set (optional)'}")
 
-    arxiv_papers = fetch_arxiv(QUERY)
-    print(f"[arXiv] {len(arxiv_papers)} papers fetched")
+    arxiv_papers   = fetch_arxiv(QUERY)
+    print(f"[arXiv]   {len(arxiv_papers)} papers fetched")
 
-    ieee_papers = fetch_ieee(QUERY)
-    print(f"[IEEE]  {len(ieee_papers)} papers fetched")
+    ieee_papers    = fetch_ieee(QUERY)
+    print(f"[IEEE]    {len(ieee_papers)} papers fetched")
 
-    total     = len(arxiv_papers) + len(ieee_papers)
-    html_body = build_email_html(arxiv_papers, ieee_papers, QUERY)
+    scholar_papers = fetch_scholar(QUERY)
+    print(f"[Scholar] {len(scholar_papers)} papers fetched")
 
-    # Save local copy too (useful for debugging)
+    total     = len(arxiv_papers) + len(ieee_papers) + len(scholar_papers)
+    html_body = build_email_html(arxiv_papers, ieee_papers, scholar_papers, QUERY)
+
+    # Save local copy for debugging
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(html_body)
     print("[run] index.html saved (local preview)")
