@@ -1,22 +1,17 @@
 name: SerDes Daily Digest
-
 on:
   schedule:
     # Every day at 03:30 UTC = 09:00 IST
     - cron: '30 3 * * *'
-
-  # Manual trigger — also lets you type a one-off custom query
   workflow_dispatch:
     inputs:
       query:
         description: 'Custom search query (leave blank to use default)'
         required: false
         default: ''
-
 jobs:
   send-digest:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4.2.2
@@ -31,16 +26,20 @@ jobs:
 
       - name: Run digest
         env:
-          # ── Required ──────────────────────────────────────────────────────────
-          DIGEST_EMAIL:   ${{ vars.DIGEST_EMAIL }}          # your email address
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}     # from resend.com
+          # ── Required ────────────────────────────────────────────────────────
+          DIGEST_EMAIL:    ${{ vars.DIGEST_EMAIL }}
+          RESEND_API_KEY:  ${{ secrets.RESEND_API_KEY }}
 
-          # ── Optional ──────────────────────────────────────────────────────────
-          IEEE_API_KEY:   ${{ secrets.IEEE_API_KEY }}       # from developer.ieee.org
-          SEARCH_QUERY:   ${{ github.event.inputs.query || vars.SEARCH_QUERY || 'SerDes high speed transceiver PAM4' }}
+          # ── API Keys (add these as Secrets in repo settings) ────────────────
+          IEEE_API_KEY:    ${{ secrets.IEEE_API_KEY }}
+          SERPAPI_KEY:     ${{ secrets.SERPAPI_KEY }}        # ← THIS WAS MISSING
 
-          # ── Resend sender — change after verifying your own domain ─────────────
-          # While using resend.dev sandbox, FROM_EMAIL must stay as-is.
-          # After adding your domain in Resend dashboard, set this to digest@yourdomain.com
-          FROM_EMAIL: 'SerDes Digest <digest@resend.dev>'
+          # ── Optional query overrides (set as Variables to customize) ────────
+          ARXIV_QUERY:     ${{ vars.ARXIV_QUERY }}
+          IEEE_QUERY:      ${{ vars.IEEE_QUERY }}
+          SCHOLAR_QUERY:   ${{ vars.SCHOLAR_QUERY }}
+
+          # ── Sender address ───────────────────────────────────────────────────
+          FROM_EMAIL:      'SerDes Digest <digest@resend.dev>'
+
         run: python generate_report.py
