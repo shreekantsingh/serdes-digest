@@ -11,7 +11,6 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
 # ─── CONFIG (set via GitHub Secrets / Variables) ───────────────────────────────
-QUERY        = os.getenv("SEARCH_QUERY", "SerDes high speed transceiver PAM4")
 DIGEST_EMAIL = os.getenv("DIGEST_EMAIL", "")          # your email address
 RESEND_KEY   = os.getenv("RESEND_API_KEY", "")        # from resend.com (free)
 IEEE_KEY     = os.getenv("IEEE_API_KEY", "")          # from developer.ieee.org (free, optional)
@@ -20,13 +19,43 @@ FROM_EMAIL   = os.getenv("FROM_EMAIL", "digest@resend.dev")
 
 MAX_RESULTS = 12
 START_YEAR  = (datetime.now() - timedelta(days=180)).year
+
+# ─── SOURCE-SPECIFIC OPTIMIZED QUERIES ────────────────────────────────────────
+# arXiv: field-targeted — ti: = title, abs: = abstract
+# Covers CDR, equalization (DFE/FFE/CTLE), high-speed links, ADC-based receivers
+ARXIV_QUERY = os.getenv(
+    "ARXIV_QUERY",
+    "(ti:SerDes OR ti:\"serial link\" OR ti:transceiver) AND "
+    "(ti:CDR OR ti:equalization OR ti:DFE OR ti:FFE OR ti:CTLE OR "
+    "ti:PAM4 OR ti:\"112G\" OR ti:\"224G\" OR ti:\"high speed\")"
+)
+
+# IEEE Xplore: Boolean full-text search — most effective with OR/AND operators
+# Targets actual circuit/system papers in JSSC, ISSCC, CICC, TCAS
+IEEE_QUERY = os.getenv(
+    "IEEE_QUERY",
+    "(\"SerDes\" OR \"serial link\" OR \"high-speed transceiver\") AND "
+    "(\"CDR\" OR \"clock and data recovery\" OR \"DFE\" OR \"FFE\" OR \"CTLE\" OR "
+    "\"PAM4\" OR \"112Gbps\" OR \"224Gbps\" OR \"equalization\" OR "
+    "\"ADC-based receiver\" OR \"bang-bang phase detector\")"
+)
+
+# Google Scholar: keyword-style, no Boolean — most natural language friendly
+SCHOLAR_QUERY = os.getenv(
+    "SCHOLAR_QUERY",
+    "SerDes CDR equalization DFE FFE 112G 224G PAM4 transceiver ISSCC JSSC"
+)
+
+# Display label shown in email header
+DISPLAY_QUERY = "SerDes · CDR · Equalization · PAM4 · 112G/224G"
 # ───────────────────────────────────────────────────────────────────────────────
 
 
-def fetch_arxiv(query: str) -> list[dict]:
+def fetch_arxiv(query: str = ARXIV_QUERY) -> list[dict]:
+    # arXiv supports field-specific search: ti: abs: au: etc.
     url = (
         "https://export.arxiv.org/api/query"
-        f"?search_query=all:{requests.utils.quote(query)}"
+        f"?search_query={requests.utils.quote(query)}"
         f"&start=0&max_results={MAX_RESULTS}"
         "&sortBy=submittedDate&sortOrder=descending"
     )
@@ -55,13 +84,13 @@ def fetch_arxiv(query: str) -> list[dict]:
         return []
 
 
-def fetch_ieee(query: str) -> list[dict]:
+def fetch_ieee(query: str = IEEE_QUERY) -> list[dict]:
     if not IEEE_KEY:
         print("[IEEE] No API key — skipping.")
         return []
     url = (
         "https://ieeexploreapi.ieee.org/api/v1/search/articles"
-        f"?querytext={requests.utils.quote(query)}"
+        f"?querytext={requests.utils.quote(query)}"  # IEEE supports Boolean AND/OR
         f"&max_records={MAX_RESULTS}"
         "&sort_field=publication_year&sort_order=desc"
         f"&start_year={START_YEAR}"
@@ -92,7 +121,7 @@ def fetch_ieee(query: str) -> list[dict]:
         return []
 
 
-def fetch_scholar(query: str) -> list[dict]:
+def fetch_scholar(query: str = SCHOLAR_QUERY) -> list[dict]:
     """
     Fetches Google Scholar results via SerpAPI.
     Sign up free at https://serpapi.com — 100 searches/month on the free tier.
@@ -216,7 +245,7 @@ def build_email_html(
     arxiv: list[dict],
     ieee: list[dict],
     scholar: list[dict],
-    query: str,
+    query: str = DISPLAY_QUERY,
 ) -> str:
     date_str = datetime.now().strftime("%A, %d %B %Y")
     total    = len(arxiv) + len(ieee) + len(scholar)
@@ -342,23 +371,25 @@ def send_email(html_body: str, total: int) -> bool:
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"[run] Query        : {QUERY}")
+    print(f"[run] arXiv query  : {ARXIV_QUERY[:80]}...")
+    print(f"[run] IEEE query   : {IEEE_QUERY[:80]}...")
+    print(f"[run] Scholar query: {SCHOLAR_QUERY}")
     print(f"[run] To email     : {DIGEST_EMAIL or 'NOT SET'}")
     print(f"[run] Resend key   : {'set ✓' if RESEND_KEY else 'NOT SET'}")
     print(f"[run] IEEE key     : {'set ✓' if IEEE_KEY else 'not set (optional)'}")
     print(f"[run] SerpAPI key  : {'set ✓' if SERPAPI_KEY else 'not set (optional)'}")
 
-    arxiv_papers   = fetch_arxiv(QUERY)
+    arxiv_papers   = fetch_arxiv()
     print(f"[arXiv]   {len(arxiv_papers)} papers fetched")
 
-    ieee_papers    = fetch_ieee(QUERY)
+    ieee_papers    = fetch_ieee()
     print(f"[IEEE]    {len(ieee_papers)} papers fetched")
 
-    scholar_papers = fetch_scholar(QUERY)
+    scholar_papers = fetch_scholar()
     print(f"[Scholar] {len(scholar_papers)} papers fetched")
 
     total     = len(arxiv_papers) + len(ieee_papers) + len(scholar_papers)
-    html_body = build_email_html(arxiv_papers, ieee_papers, scholar_papers, QUERY)
+    html_body = build_email_html(arxiv_papers, ieee_papers, scholar_papers)
 
     # Save local copy for debugging
     with open("index.html", "w", encoding="utf-8") as f:
