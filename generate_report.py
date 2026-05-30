@@ -20,35 +20,40 @@ FROM_EMAIL   = os.getenv("FROM_EMAIL", "digest@resend.dev")
 MAX_RESULTS = 12
 START_YEAR  = (datetime.now() - timedelta(days=180)).year
 
-# ─── SOURCE-SPECIFIC OPTIMIZED QUERIES ────────────────────────────────────────
-# arXiv: field-targeted — ti: = title, abs: = abstract
-# Covers CDR, equalization (DFE/FFE/CTLE), high-speed links, ADC-based receivers
+# ─── SOURCE-SPECIFIC OPTIMIZED QUERIES ─────────────────────────────────────────
+# FOCUS: Telecom / Datacenter / Optical SerDes
+# Excludes: neural/BCI/neuromorphic papers
+# Key venues: ISSCC, JSSC, CICC, TCAS-I, JLT, PTL, OFC, ECOC
+
 ARXIV_QUERY = os.getenv(
     "ARXIV_QUERY",
-    "(ti:SerDes OR ti:\"serial link\" OR ti:transceiver) AND "
-    "(ti:CDR OR ti:equalization OR ti:DFE OR ti:FFE OR ti:CTLE OR "
-    "ti:PAM4 OR ti:\"112G\" OR ti:\"224G\" OR ti:\"high speed\")"
+    "ti:SerDes OR ti:wireline AND "
+    "(ti:CDR OR ti:DFE OR ti:FFE OR ti:CTLE OR ti:PAM4 OR ti:PAM8) AND "
+    "NOT (ti:neural OR ti:brain OR ti:implant OR ti:BCI OR ti:neuromorphic)"
 )
 
-# IEEE Xplore: Boolean full-text search — most effective with OR/AND operators
-# Targets actual circuit/system papers in JSSC, ISSCC, CICC, TCAS
 IEEE_QUERY = os.getenv(
     "IEEE_QUERY",
-    "(\"SerDes\" OR \"serial link\" OR \"high-speed transceiver\") AND "
-    "(\"CDR\" OR \"clock and data recovery\" OR \"DFE\" OR \"FFE\" OR \"CTLE\" OR "
-    "\"PAM4\" OR \"112Gbps\" OR \"224Gbps\" OR \"equalization\" OR "
-    "\"ADC-based receiver\" OR \"bang-bang phase detector\")"
+    '("SerDes" OR "wireline transceiver" OR "high-speed transceiver"'
+    ' OR "optical transceiver" OR "coherent transceiver") AND'
+    ' ("CDR" OR "DFE" OR "FFE" OR "CTLE" OR "PAM4" OR "PAM8"'
+    ' OR "112G" OR "224G" OR "800G" OR "baud rate"'
+    ' OR "OIF CEI" OR "datacenter interconnect" OR "coherent optical"'
+    ' OR "pluggable transceiver" OR "mueller-muller" OR "bang-bang") AND NOT'
+    ' ("neural recording" OR "brain computer" OR "implantable"'
+    ' OR "neuromorphic" OR "neuropixels" OR "intracortical")'
 )
 
-# Google Scholar: keyword-style, no Boolean — most natural language friendly
 SCHOLAR_QUERY = os.getenv(
     "SCHOLAR_QUERY",
-    "SerDes CDR equalization DFE FFE 112G 224G PAM4 transceiver ISSCC JSSC"
+    "SerDes wireline transceiver CDR DFE FFE PAM4 112G 224G 800G "
+    "equalization ethernet datacenter OIF CEI ISSCC JSSC JLT OFC"
 )
 
-# Display label shown in email header
-DISPLAY_QUERY = "SerDes · CDR · Equalization · PAM4 · 112G/224G"
+DISPLAY_QUERY = "Telecom SerDes · PAM4 · 112G/224G/800G · CDR · Equalization · Optical"
 # ───────────────────────────────────────────────────────────────────────────────
+
+
 
 
 def fetch_arxiv(query: str = ARXIV_QUERY) -> list[dict]:
