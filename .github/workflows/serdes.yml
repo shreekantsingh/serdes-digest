@@ -23,7 +23,15 @@ jobs:
 
       - name: Install dependencies
         run: pip install requests
-
+      - name: Debug secrets (safe — only shows if set or not)
+        env:
+          IEEE_API_KEY:  ${{ secrets.IEEE_API_KEY }}
+          SERPAPI_KEY:   ${{ secrets.SERPAPI_KEY }}
+        run: |
+          echo "IEEE_API_KEY is set: $( [ -n "$IEEE_API_KEY" ] && echo YES || echo NO )"
+          echo "SERPAPI_KEY is set:  $( [ -n "$SERPAPI_KEY" ] && echo YES || echo NO )"
+          echo "IEEE_API_KEY length: ${#IEEE_API_KEY}"
+          echo "SERPAPI_KEY length:  ${#SERPAPI_KEY}"
       - name: Run digest
         env:
           # ── Required ────────────────────────────────────────────────────────
